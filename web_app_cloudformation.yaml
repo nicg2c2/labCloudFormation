@@ -1,147 +1,147 @@
-AWSTemplateFormatVersion: '2010-09-09'  # Indica la versión del formato de la plantilla de CloudFormation.
-Description: >  # Comienza una descripción de la plantilla.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
   Plantilla de CloudFormation para desplegar una aplicación web con S3,  
   una VPC, EC2 con Apache, Auto Scaling Group, y un Balanceador de Carga (ELB).  # Detalla los recursos que se desplegarán.
 
 
-Parameters:  # Sección para definir parámetros que pueden ser proporcionados en la creación de la pila.
+Parameters:  # Sección para definir parámetros
   InstanceType:  # Parámetro para el tipo de instancia EC2.
-    Type: String  # Especifica que el tipo es un string.
+    Type: String
     Default: t2.micro  # Valor por defecto para el parámetro.
     Description: Tipo de instancia EC2 a utilizar  # Descripción del parámetro.
     AllowedValues:  # Valores permitidos para este parámetro.
-      - t2.micro  # Tipo de instancia permitido.
-      - t2.small  # Tipo de instancia permitido.
-      - t3.micro  # Tipo de instancia permitido.
-      - t3.small  # Tipo de instancia permitido.
+      - t2.micro
+      - t2.small
+      - t3.micro
+      - t3.small
 
-  KeyName:  # Parámetro para el nombre del par de claves SSH.
-    Type: AWS::EC2::KeyPair::KeyName  # Especifica que es un nombre de par de claves EC2.
-    Description: Nombre del par de claves SSH existente para conectarse a la instancia EC2  # Descripción del parámetro.
-    ConstraintDescription: Clave RSA (SSH) válida para la instancia EC2de la WebApp para CloudFormation  # Descripción de la restricción para el parámetro.
-    Default: webApp_keypair  # Aquí colocas el nombre exacto de la clave que creaste en AWS.
+  KeyName:  # Parámetro claves SSH.
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Nombre del par de claves SSH existente para conectarse a la instancia EC2
+    ConstraintDescription: Clave RSA (SSH) válida para la instancia EC2b de la WebApp para CloudFormation
+    Default: webApp_keypair # nombre de la key SSH por defecto
 
 Mappings:  # Sección para definir mapas de valores que se pueden usar en la plantilla.
   # Mapa de AMIs para cada región.
-  RegionMap:  # Mapa que relaciona regiones con las AMIs correspondientes.
-    us-east-1:  # Región específica.
+  RegionMap:
+    us-east-1:
       AMI: ami-0fff1b9a61dec8a5f  # ID de la AMI para la región us-east-1.
-    us-east-2:  # Otra región.
+    us-east-2:
       AMI: ami-09da212cf18033880  # ID de la AMI para la región us-east-2.
 
-Resources:  # Sección donde se definen los recursos que se crearán.
+Resources:
   WebAppS3Bucket:  # Recurso para el bucket de S3.
-    Type: 'AWS::S3::Bucket'  # Especifica que el tipo de recurso es un bucket S3.
-    Properties:  # Propiedades del bucket.
+    Type: 'AWS::S3::Bucket'
+    Properties:
       WebsiteConfiguration:  # Configuración del sitio web para el bucket.
         IndexDocument: index.html  # Documento principal que se mostrará al acceder al bucket.
         ErrorDocument: error.html  # Documento que se mostrará en caso de error.
       PublicAccessBlockConfiguration:  # Configuración para bloquear accesos públicos.
-        BlockPublicAcls: false  # Permite ACLs públicas en el bucket.
-        IgnorePublicAcls: false  # Permite ignorar las ACLs públicas.
-        BlockPublicPolicy: false  # Permite políticas públicas en el bucket.
-        RestrictPublicBuckets: false  # No restringe el acceso público al bucket.
+        BlockPublicAcls: false  # Permite ACLs públicas en el bucket. (solo para LABS)
+        IgnorePublicAcls: false  # Permite ignorar las ACLs públicas. (solo para LABS)
+        BlockPublicPolicy: false  # Permite políticas públicas en el bucket. (solo para LABS)
+        RestrictPublicBuckets: false  # No restringe el acceso público al bucket. (solo para LABS)
 
-  WebAppS3BucketPolicy:  # Recurso para la política del bucket de S3.
-    Type: 'AWS::S3::BucketPolicy'  # Especifica que el tipo de recurso es una política de bucket S3.
-    Properties:  # Propiedades de la política.
+  WebAppS3BucketPolicy:  # politica del bucket de S3.
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
       Bucket: !Ref WebAppS3Bucket  # Referencia al bucket de S3 creado anteriormente.
-      PolicyDocument:  # Documento de la política.
-        Version: '2012-10-17'  # Versión de la política.
+      PolicyDocument:
+        Version: '2012-10-17'
         Statement:  # Declaraciones de la política.
           - Effect: Allow  # Efecto de la política (permitir).
             Principal: '*'  # Principal (cualquiera) que puede realizar la acción.
-            Action:  # Acciones permitidas.
+            Action:
               - 's3:PutObject'  # Permitir la acción de subir objetos al bucket.
               - 's3:GetObject'  # Permitir la acción de obtener objetos del bucket.
             Resource: !Sub 'arn:aws:s3:::${WebAppS3Bucket}/*'  # ARN de los recursos a los que se aplica la política.
 
   WebAppVPC:  # Recurso para crear una VPC.
-    Type: 'AWS::EC2::VPC'  # Especifica que el tipo de recurso es una VPC.
-    Properties:  # Propiedades de la VPC.
-      CidrBlock: 10.0.0.0/16  # Bloque CIDR para la VPC.
-      EnableDnsSupport: true  # Habilita el soporte para DNS en la VPC.
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: 10.0.0.0/16  # Bloque CIDR para la VPC (define el rango de direcciones IP)
+      EnableDnsSupport: true  # Habilita el soporte para DNS en la VPC. (los servicios de AWS pueden utilizar nombres de dominio en lugar de direcciones IP)
       EnableDnsHostnames: true  # Habilita nombres de host DNS en la VPC.
-      Tags:  # Etiquetas para la VPC.
-        - Key: Name  # Clave de la etiqueta.
-          Value: WebAppVPC  # Valor de la etiqueta.
+      Tags:
+        - Key: Name
+          Value: WebAppVPC
 
-  WebAppInternetGateway:  # Recurso para crear una puerta de enlace de Internet.
-    Type: 'AWS::EC2::InternetGateway'  # Especifica que el tipo de recurso es una puerta de enlace de Internet.
-    Properties: {}  # Sin propiedades adicionales.
+  WebAppInternetGateway:  # Puerta de enlace de Internet.(permite que los recursos en tu VPC (como las instancias EC2) puedan comunicarse con Internet.)
+    Type: 'AWS::EC2::InternetGateway'
+    Properties: {}
 
-  WebAppVpcGatewayAttachment:  # Recurso para adjuntar la puerta de enlace a la VPC.
-    Type: 'AWS::EC2::VPCGatewayAttachment'  # Especifica que el tipo de recurso es un adjunto de puerta de enlace a la VPC.
-    Properties:  # Propiedades del adjunto.
+  WebAppVpcGatewayAttachment:  # Adjuntar la puerta de enlace a la VPC.
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
       VpcId: !Ref WebAppVPC  # Referencia a la VPC creada anteriormente.
-      InternetGatewayId: !Ref WebAppInternetGateway  # Referencia a la puerta de enlace de Internet creada anteriormente.
+      InternetGatewayId: !Ref WebAppInternetGateway  # Referencia a la puerta de enlace de Internet creada anteriormente. (Sin esta parte, la VPC no tendría una forma de enrutar el tráfico a Internet, incluso si tiene una puerta de enlace de Internet.)
 
-  WebAppRouteTable:  # Recurso para crear una tabla de rutas.
-    Type: 'AWS::EC2::RouteTable'  # Especifica que el tipo de recurso es una tabla de rutas.
-    Properties:  # Propiedades de la tabla de rutas.
-      VpcId: !Ref WebAppVPC  # Referencia a la VPC creada anteriormente.
-      Tags:  # Etiquetas para la tabla de rutas.
-        - Key: Name  # Clave de la etiqueta.
-          Value: WebAppRouteTable  # Valor de la etiqueta.
+  WebAppRouteTable:  # Recurso para crear una route table
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref WebAppVPC
+      Tags:
+        - Key: Name
+          Value: WebAppRouteTable
 
-  WebAppRoute:  # Recurso para crear una ruta.
-    Type: 'AWS::EC2::Route'  # Especifica que el tipo de recurso es una ruta.
-    Properties:  # Propiedades de la ruta.
-      RouteTableId: !Ref WebAppRouteTable  # Referencia a la tabla de rutas creada anteriormente.
+  WebAppRoute:  # Recurso para crear una route.
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref WebAppRouteTable
       DestinationCidrBlock: 0.0.0.0/0  # Bloque CIDR de destino (todas las direcciones IP).
-      GatewayId: !Ref WebAppInternetGateway  # Referencia a la puerta de enlace de Internet para la ruta.
+      GatewayId: !Ref WebAppInternetGateway  #(Permite que las instancias en la VPC puedan comunicarse con el exterior (Internet))
 
   WebAppSubnet1:  # Recurso para crear la primera subred.
-    Type: 'AWS::EC2::Subnet'  # Especifica que el tipo de recurso es una subred.
-    Properties:  # Propiedades de la subred.
-      VpcId: !Ref WebAppVPC  # Referencia a la VPC creada anteriormente.
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref WebAppVPC 
       CidrBlock: 10.0.0.0/24  # Bloque CIDR para la subred.
-      MapPublicIpOnLaunch: true  # Mapea IPs públicas al lanzar instancias en esta subred.
+      MapPublicIpOnLaunch: true  # Mapea IPs públicas al lanzar instancias en esta subred. (asegura que las instancias que se lancen en esta subred reciban automáticamente una IP pública)
       AvailabilityZone: !Select [0, !GetAZs '']  # Selecciona la primera zona de disponibilidad.
-      Tags:  # Etiquetas para la subred.
-        - Key: Name  # Clave de la etiqueta.
-          Value: WebAppSubnet1  # Valor de la etiqueta.
+      Tags:
+        - Key: Name
+          Value: WebAppSubnet1
 
   WebAppSubnet2:  # Recurso para crear la segunda subred.
-    Type: 'AWS::EC2::Subnet'  # Especifica que el tipo de recurso es una subred.
-    Properties:  # Propiedades de la subred.
-      VpcId: !Ref WebAppVPC  # Referencia a la VPC creada anteriormente.
-      CidrBlock: 10.0.1.0/24  # Bloque CIDR para la subred.
-      MapPublicIpOnLaunch: true  # Mapea IPs públicas al lanzar instancias en esta subred.
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref WebAppVPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
       AvailabilityZone: !Select [1, !GetAZs '']  # Selecciona la segunda zona de disponibilidad.
-      Tags:  # Etiquetas para la subred.
-        - Key: Name  # Clave de la etiqueta.
-          Value: WebAppSubnet2  # Valor de la etiqueta.
+      Tags:
+        - Key: Name
+          Value: WebAppSubnet2
 
   WebAppSubnet1RouteTableAssociation:  # Recurso para asociar la tabla de rutas con la primera subred.
-    Type: 'AWS::EC2::SubnetRouteTableAssociation'  # Especifica que el tipo de recurso es una asociación de tabla de rutas a subred.
-    Properties:  # Propiedades de la asociación.
-      SubnetId: !Ref WebAppSubnet1  # Referencia a la primera subred.
-      RouteTableId: !Ref WebAppRouteTable  # Referencia a la tabla de rutas.
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref WebAppSubnet1
+      RouteTableId: !Ref WebAppRouteTable
 
   WebAppSubnet2RouteTableAssociation: # Recurso para asociar la tabla de rutas con la segunda subred.
-    Type: 'AWS::EC2::SubnetRouteTableAssociation'  # Especifica que el tipo de recurso es una asociación de tabla de rutas a subred.
-    Properties:  # Propiedades de la asociación.
-      SubnetId: !Ref WebAppSubnet2  # Referencia a la segunda subred.
-      RouteTableId: !Ref WebAppRouteTable  # Referencia a la tabla de rutas.
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref WebAppSubnet2
+      RouteTableId: !Ref WebAppRouteTable
 
   WebAppSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
-      GroupDescription: 'Permitir acceso HTTP y SSH'  # Descripción del grupo de seguridad.
-      VpcId: !Ref WebAppVPC  # Referencia al VPC donde se creará el grupo de seguridad.
-      SecurityGroupIngress:  # Regla de entrada para permitir tráfico.
+      GroupDescription: 'Permitir acceso HTTP y SSH'  # Descripcion del grupo de seguridad.
+      VpcId: !Ref WebAppVPC  # Referencia al VPC donde se creara el grupo de seguridad.
+      SecurityGroupIngress:  # Regla de entrada para permitir trafico.
         - IpProtocol: tcp  # Protocolo de red para la regla (TCP en este caso).
-          FromPort: '22'  # Puerto de inicio para el acceso SSH.
-          ToPort: '22'  # Puerto de fin para el acceso SSH.
+          FromPort: '22'
+          ToPort: '22'
           CidrIp: 0.0.0.0/0  # Permitir acceso SSH desde cualquier dirección IP (puede ser restrictivo).
         - IpProtocol: tcp  # Protocolo de red para la regla (TCP).
-          FromPort: '80'  # Puerto para tráfico HTTP.
-          ToPort: '80'  # Puerto para tráfico HTTP.
+          FromPort: '80'
+          ToPort: '80'
           CidrIp: 0.0.0.0/0  # Permitir acceso HTTP desde cualquier dirección IP.
         - IpProtocol: tcp  # Protocolo de red para la regla (TCP).
-          FromPort: '443'  # Puerto para tráfico HTTPS.
-          ToPort: '443'  # Puerto para tráfico HTTPS.
+          FromPort: '443'
+          ToPort: '443'
           CidrIp: 0.0.0.0/0  # Permitir acceso HTTPS desde cualquier dirección IP.
   
   # Define un perfil de instancia de IAM que se puede asociar a una instancia EC2.
@@ -154,7 +154,7 @@ Resources:  # Sección donde se definen los recursos que se crearán.
   WebAppInstance:
     Type: 'AWS::EC2::Instance'  # Define una instancia EC2.
     Properties:
-      InstanceType: !Ref InstanceType  # Tipo de instancia a crear (referencia a un parámetro definido).
+      InstanceType: !Ref InstanceType
       KeyName: !Ref KeyName  # Asigna la clave SSH para acceder a la instancia.
       ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", AMI]  # Selecciona la AMI según la región.
       SubnetId: !Ref WebAppSubnet1  # Referencia a la subred donde se lanzará la instancia.
@@ -162,7 +162,7 @@ Resources:  # Sección donde se definen los recursos que se crearán.
         - !Ref WebAppSecurityGroup  # Asociar el grupo de seguridad previamente definido.
       IamInstanceProfile: !Ref EC2InstanceProfile
       UserData:  # Datos de usuario para inicializar la instancia al inicio.
-        Fn::Base64: |  # Codifica el contenido en base64.
+        Fn::Base64: |
           #!/bin/bash
           exec > /var/log/user-data.log 2>&1  # Redirige la salida del script a un archivo de log.
           echo "Iniciando UserData en la instancia"
@@ -197,7 +197,7 @@ Resources:  # Sección donde se definen los recursos que se crearán.
       SecurityGroups:
         - !Ref WebAppSecurityGroup  # Asocia el grupo de seguridad a la configuración de lanzamiento.
       UserData:  # Datos de usuario para inicializar las instancias al lanzarse.
-        Fn::Base64: |  # Codifica el contenido en base64.
+        Fn::Base64: |
           #!/bin/bash
           exec > /var/log/user-data.log 2>&1
           echo "Iniciando UserData en la instancia de Auto Scaling"
@@ -236,14 +236,14 @@ Resources:  # Sección donde se definen los recursos que se crearán.
         - !Ref WebAppSubnet1  # Especifica la primera subred donde se lanzarán las instancias del grupo de escalado automático.
         - !Ref WebAppSubnet2  # Especifica la segunda subred donde se lanzarán las instancias del grupo de escalado automático.
       LaunchConfigurationName: !Ref WebAppLaunchConfiguration  # Referencia a la configuración de lanzamiento que define la AMI y tipo de instancia.
-      MinSize: '1'  # Establece el número mínimo de instancias en el grupo; siempre habrá al menos una instancia activa.
-      MaxSize: '3'  # Establece el número máximo de instancias en el grupo; se pueden lanzar hasta tres instancias según la demanda.
+      MinSize: '1'  # Establece el numero minimo de instancias en el grupo; siempre habra al menos una instancia activa.
+      MaxSize: '3'  # Establece el numero maximo de instancias en el grupo; se pueden lanzar hasta tres instancias segun la demanda.
       DesiredCapacity: '2'  # Indica el número deseado de instancias en el grupo; el grupo intentará mantener dos instancias activas.
       TargetGroupARNs:
-        - !Ref WebAppTargetGroup  # Referencia al grupo de destino asociado, al cual el balanceador de carga enviará el tráfico.
+        - !Ref WebAppTargetGroup  # Referencia al grupo de destino asociado, al cual el balanceador de carga enviara el tráfico.
       Tags:
-        - Key: Name  # Clave de la etiqueta que se aplicará a las instancias lanzadas por el grupo.
-          Value: WebAppASG  # Valor de la etiqueta; se asignará a las instancias en el grupo.
+        - Key: Name
+          Value: WebAppASG
           PropagateAtLaunch: true  # Indica que la etiqueta se propagará a las instancias cuando sean lanzadas.
 
   WebAppLoadBalancer:
@@ -261,7 +261,7 @@ Resources:  # Sección donde se definen los recursos que se crearán.
   WebAppTargetGroup:
       Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'  # Define un grupo de destino para el balanceador de carga en la versión 2 de Elastic Load Balancing.
       Properties:
-        VpcId: !Ref WebAppVPC  # Especifica el ID de la VPC donde se ubicará el grupo de destino.
+        VpcId: !Ref WebAppVPC
         Port: 80  # El puerto en el que las instancias recibirán el tráfico del balanceador de carga.
         Protocol: HTTP  # El protocolo utilizado para las comunicaciones entre el balanceador de carga y las instancias.
         HealthCheckPath: /  # Ruta utilizada para realizar chequeos de salud en las instancias (se espera que responda 200 OK).
