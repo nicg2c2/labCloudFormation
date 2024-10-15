@@ -1,0 +1,287 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Plantilla de CloudFormation para desplegar una aplicación web con S3,  
+  una VPC, EC2 con Apache, Auto Scaling Group, y un Balanceador de Carga (ELB).  # Detalla los recursos que se desplegarán.
+
+
+Parameters:  # Sección para definir parámetros
+  InstanceType:  # Parámetro para el tipo de instancia EC2.
+    Type: String
+    Default: t2.micro  # Valor por defecto para el parámetro.
+    Description: Tipo de instancia EC2 a utilizar  # Descripción del parámetro.
+    AllowedValues:  # Valores permitidos para este parámetro.
+      - t2.micro
+      - t2.small
+      - t3.micro
+      - t3.small
+
+  KeyName:  # Parámetro claves SSH.
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Nombre del par de claves SSH existente para conectarse a la instancia EC2
+    ConstraintDescription: Clave RSA (SSH) válida para la instancia EC2b de la WebApp para CloudFormation
+    Default: webApp_keypair # nombre de la key SSH por defecto
+
+Mappings:  # Sección para definir mapas de valores que se pueden usar en la plantilla.
+  # Mapa de AMIs para cada región.
+  RegionMap:
+    us-east-1:
+      AMI: ami-0fff1b9a61dec8a5f  # ID de la AMI para la región us-east-1.
+    us-east-2:
+      AMI: ami-09da212cf18033880  # ID de la AMI para la región us-east-2.
+
+Resources:
+  WebAppS3Bucket:  # Recurso para el bucket de S3.
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      WebsiteConfiguration:  # Configuración del sitio web para el bucket.
+        IndexDocument: index.html  # Documento principal que se mostrará al acceder al bucket.
+        ErrorDocument: error.html  # Documento que se mostrará en caso de error.
+      PublicAccessBlockConfiguration:  # Configuración para bloquear accesos públicos.
+        BlockPublicAcls: false  # Permite ACLs públicas en el bucket. (solo para LABS)
+        IgnorePublicAcls: false  # Permite ignorar las ACLs públicas. (solo para LABS)
+        BlockPublicPolicy: false  # Permite políticas públicas en el bucket. (solo para LABS)
+        RestrictPublicBuckets: false  # No restringe el acceso público al bucket. (solo para LABS)
+
+  WebAppS3BucketPolicy:  # politica del bucket de S3.
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref WebAppS3Bucket  # Referencia al bucket de S3 creado anteriormente.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:  # Declaraciones de la política.
+          - Effect: Allow  # Efecto de la política (permitir).
+            Principal: '*'  # Principal (cualquiera) que puede realizar la acción.
+            Action:
+              - 's3:PutObject'  # Permitir la acción de subir objetos al bucket.
+              - 's3:GetObject'  # Permitir la acción de obtener objetos del bucket.
+            Resource: !Sub 'arn:aws:s3:::${WebAppS3Bucket}/*'  # ARN de los recursos a los que se aplica la política.
+
+  WebAppVPC:  # Recurso para crear una VPC.
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: 10.0.0.0/16  # Bloque CIDR para la VPC (define el rango de direcciones IP)
+      EnableDnsSupport: true  # Habilita el soporte para DNS en la VPC. (los servicios de AWS pueden utilizar nombres de dominio en lugar de direcciones IP)
+      EnableDnsHostnames: true  # Habilita nombres de host DNS en la VPC.
+      Tags:
+        - Key: Name
+          Value: WebAppVPC
+
+  WebAppInternetGateway:  # Puerta de enlace de Internet.(permite que los recursos en tu VPC (como las instancias EC2) puedan comunicarse con Internet.)
+    Type: 'AWS::EC2::InternetGateway'
+    Properties: {}
+
+  WebAppVpcGatewayAttachment:  # Adjuntar la puerta de enlace a la VPC.
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref WebAppVPC  # Referencia a la VPC creada anteriormente.
+      InternetGatewayId: !Ref WebAppInternetGateway  # Referencia a la puerta de enlace de Internet creada anteriormente. (Sin esta parte, la VPC no tendría una forma de enrutar el tráfico a Internet, incluso si tiene una puerta de enlace de Internet.)
+
+  WebAppRouteTable:  # Recurso para crear una route table
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref WebAppVPC
+      Tags:
+        - Key: Name
+          Value: WebAppRouteTable
+
+  WebAppRoute:  # Recurso para crear una route.
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref WebAppRouteTable
+      DestinationCidrBlock: 0.0.0.0/0  # Bloque CIDR de destino (todas las direcciones IP).
+      GatewayId: !Ref WebAppInternetGateway  #(Permite que las instancias en la VPC puedan comunicarse con el exterior (Internet))
+
+  WebAppSubnet1:  # Recurso para crear la primera subred.
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref WebAppVPC 
+      CidrBlock: 10.0.0.0/24  # Bloque CIDR para la subred.
+      MapPublicIpOnLaunch: true  # Mapea IPs públicas al lanzar instancias en esta subred. (asegura que las instancias que se lancen en esta subred reciban automáticamente una IP pública)
+      AvailabilityZone: !Select [0, !GetAZs '']  # Selecciona la primera zona de disponibilidad.
+      Tags:
+        - Key: Name
+          Value: WebAppSubnet1
+
+  WebAppSubnet2:  # Recurso para crear la segunda subred.
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref WebAppVPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [1, !GetAZs '']  # Selecciona la segunda zona de disponibilidad.
+      Tags:
+        - Key: Name
+          Value: WebAppSubnet2
+
+  WebAppSubnet1RouteTableAssociation:  # Recurso para asociar la tabla de rutas con la primera subred.
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref WebAppSubnet1
+      RouteTableId: !Ref WebAppRouteTable
+
+  WebAppSubnet2RouteTableAssociation: # Recurso para asociar la tabla de rutas con la segunda subred.
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref WebAppSubnet2
+      RouteTableId: !Ref WebAppRouteTable
+
+  WebAppSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Permitir acceso HTTP y SSH'  # Descripcion del grupo de seguridad.
+      VpcId: !Ref WebAppVPC  # Referencia al VPC donde se creara el grupo de seguridad.
+      SecurityGroupIngress:  # Regla de entrada para permitir trafico.
+        - IpProtocol: tcp  # Protocolo de red para la regla (TCP en este caso).
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0  # Permitir acceso SSH desde cualquier dirección IP (puede ser restrictivo).
+        - IpProtocol: tcp  # Protocolo de red para la regla (TCP).
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0  # Permitir acceso HTTP desde cualquier dirección IP.
+        - IpProtocol: tcp  # Protocolo de red para la regla (TCP).
+          FromPort: '443'
+          ToPort: '443'
+          CidrIp: 0.0.0.0/0  # Permitir acceso HTTPS desde cualquier dirección IP.
+  
+  # Define un perfil de instancia de IAM que se puede asociar a una instancia EC2.
+  EC2InstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'  
+    Properties:
+      Roles:
+        - EC2fullAccesToS3
+
+  WebAppInstance:
+    Type: 'AWS::EC2::Instance'  # Define una instancia EC2.
+    Properties:
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName  # Asigna la clave SSH para acceder a la instancia.
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", AMI]  # Selecciona la AMI según la región.
+      SubnetId: !Ref WebAppSubnet1  # Referencia a la subred donde se lanzará la instancia.
+      SecurityGroupIds:
+        - !Ref WebAppSecurityGroup  # Asociar el grupo de seguridad previamente definido.
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      UserData:  # Datos de usuario para inicializar la instancia al inicio.
+        Fn::Base64: |
+          #!/bin/bash
+          exec > /var/log/user-data.log 2>&1  # Redirige la salida del script a un archivo de log.
+          echo "Iniciando UserData en la instancia"
+          yum update -y
+          yum install -y httpd aws-cli wget
+          systemctl start httpd
+          systemctl enable httpd
+
+          # Obtener el nombre del bucket
+          BUCKET_NAME=$(aws s3api list-buckets --query "Buckets[?contains(Name, 'webapp')].Name" --output text)  # Busca el bucket que contiene 'webapp'.
+          echo "Bucket encontrado: $BUCKET_NAME"
+
+          # Descargar archivos desde GitHub
+          wget https://raw.githubusercontent.com/nicg2c2/labCloudFormation/develop/index.html -O /var/www/html/index.html
+          wget https://raw.githubusercontent.com/nicg2c2/labCloudFormation/develop/error.html -O /var/www/html/error.html
+
+          # Subir archivos a S3
+          aws s3 cp /var/www/html/index.html s3://$BUCKET_NAME/index.html
+          aws s3 cp /var/www/html/error.html s3://$BUCKET_NAME/error.html  
+
+          echo "Archivos descargados desde GitHub y subidos a S3"
+      Tags:
+        - Key: Name
+          Value: WebAppInstance
+
+  WebAppLaunchConfiguration:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'  # Define la configuración de lanzamiento para Auto Scaling.
+    Properties:
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", AMI]  # Selecciona la AMI según la región.
+      InstanceType: !Ref InstanceType  # Tipo de instancia a crear.
+      KeyName: !Ref KeyName  # Asigna la clave SSH.
+      SecurityGroups:
+        - !Ref WebAppSecurityGroup  # Asocia el grupo de seguridad a la configuración de lanzamiento.
+      UserData:  # Datos de usuario para inicializar las instancias al lanzarse.
+        Fn::Base64: |
+          #!/bin/bash
+          exec > /var/log/user-data.log 2>&1
+          echo "Iniciando UserData en la instancia de Auto Scaling"
+          yum update -y
+          yum install -y httpd aws-cli wget
+          systemctl start httpd
+          systemctl enable httpd
+
+          # Obtener el nombre del bucket
+          BUCKET_NAME=$(aws s3api list-buckets --query "Buckets[?contains(Name, 'webapp')].Name" --output text)  # Busca el bucket que contiene 'webapp'.
+          echo "Bucket encontrado: $BUCKET_NAME"
+
+          # Descargar archivos desde GitHub (o desde S3 si ya existen)
+          if aws s3 ls s3://$BUCKET_NAME/index.html; then
+            echo "index.html ya existe en el bucket"
+            aws s3 cp s3://$BUCKET_NAME/index.html /var/www/html/index.html
+          else
+            wget https://raw.githubusercontent.com/nicg2c2/labCloudFormation/develop/index.html -O /var/www/html/index.html
+            aws s3 cp /var/www/html/index.html s3://$BUCKET_NAME/index.html
+          fi
+
+          if aws s3 ls s3://$BUCKET_NAME/error.html; then
+            echo "error.html ya existe en el bucket"
+            aws s3 cp s3://$BUCKET_NAME/error.html /var/www/html/error.html
+          else
+            wget https://raw.githubusercontent.com/nicg2c2/labCloudFormation/develop/error.html -O /var/www/html/error.html
+            aws s3 cp /var/www/html/error.html s3://$BUCKET_NAME/error.html
+          fi
+
+          echo "Archivos listos en /var/www/html"
+
+  WebAppAutoScalingGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'  # Define un grupo de escalado automático.
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref WebAppSubnet1  # Especifica la primera subred donde se lanzarán las instancias del grupo de escalado automático.
+        - !Ref WebAppSubnet2  # Especifica la segunda subred donde se lanzarán las instancias del grupo de escalado automático.
+      LaunchConfigurationName: !Ref WebAppLaunchConfiguration  # Referencia a la configuración de lanzamiento que define la AMI y tipo de instancia.
+      MinSize: '1'  # Establece el numero minimo de instancias en el grupo; siempre habra al menos una instancia activa.
+      MaxSize: '3'  # Establece el numero maximo de instancias en el grupo; se pueden lanzar hasta tres instancias segun la demanda.
+      DesiredCapacity: '2'  # Indica el número deseado de instancias en el grupo; el grupo intentará mantener dos instancias activas.
+      TargetGroupARNs:
+        - !Ref WebAppTargetGroup  # Referencia al grupo de destino asociado, al cual el balanceador de carga enviara el tráfico.
+      Tags:
+        - Key: Name
+          Value: WebAppASG
+          PropagateAtLaunch: true  # Indica que la etiqueta se propagará a las instancias cuando sean lanzadas.
+
+  WebAppLoadBalancer:
+      Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'  # Define un balanceador de carga en la configuración clásica de AWS.
+      Properties:
+        Subnets:
+          - !Ref WebAppSubnet1  # Especifica la primera subred donde se desplegará el balanceador de carga.
+          - !Ref WebAppSubnet2  # Especifica la segunda subred donde se desplegará el balanceador de carga.
+        SecurityGroups:
+          - !Ref WebAppSecurityGroup  # Asociar el grupo de seguridad que define las reglas de tráfico permitido para el balanceador de carga.
+        LoadBalancerAttributes:
+          - Key: idle_timeout.timeout_seconds  # Define un atributo del balanceador de carga.
+            Value: '60'  # Establece el tiempo de espera (en segundos) para conexiones inactivas.
+
+  WebAppTargetGroup:
+      Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'  # Define un grupo de destino para el balanceador de carga en la versión 2 de Elastic Load Balancing.
+      Properties:
+        VpcId: !Ref WebAppVPC
+        Port: 80  # El puerto en el que las instancias recibirán el tráfico del balanceador de carga.
+        Protocol: HTTP  # El protocolo utilizado para las comunicaciones entre el balanceador de carga y las instancias.
+        HealthCheckPath: /  # Ruta utilizada para realizar chequeos de salud en las instancias (se espera que responda 200 OK).
+        TargetType: instance  # Especifica que el grupo de destino se basa en instancias EC2.
+
+  WebAppListener:
+      Type: 'AWS::ElasticLoadBalancingV2::Listener'  # Define un listener para el balanceador de carga en la versión 2 de Elastic Load Balancing.
+      Properties:
+        DefaultActions:
+          - Type: forward  # Tipo de acción que realiza el listener, en este caso, redirigir el tráfico.
+            TargetGroupArn: !Ref WebAppTargetGroup  # Referencia al grupo de destino al que se enviará el tráfico.
+        LoadBalancerArn: !Ref WebAppLoadBalancer  # Referencia al balanceador de carga al que se asociará el listener.
+        Port: 80  # Puerto en el que el listener escucha el tráfico.
+        Protocol: HTTP  # Protocolo que utilizará el listener para recibir el tráfico.
+
+Outputs:
+  S3BucketURL:
+    Description: 'URL del bucket de S3 para almacenar archivos estáticos'  # Descripción del valor de salida que proporciona la URL del bucket S3.
+    Value: !GetAtt WebAppS3Bucket.WebsiteURL  # Obtiene la URL del sitio web del bucket S3.
+
+  LoadBalancerURL:
+    Description: 'URL del balanceador de carga'  # Descripción del valor de salida que proporciona la URL del balanceador de carga.
+    Value: !Sub 'http://${WebAppLoadBalancer.DNSName}'  # Utiliza la referencia DNS del balanceador de carga para construir la URL.
