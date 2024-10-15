@@ -1,18 +1,19 @@
-AWSTemplateFormatVersion: '2010-09-09'
-Description: >
+AWSTemplateFormatVersion: '2010-09-09'  # Indica la versión del formato de la plantilla de CloudFormation.
+Description: >  # Comienza una descripción de la plantilla.
   Plantilla de CloudFormation para desplegar una aplicación web con S3,  
-  una VPC, EC2 con Apache, Auto Scaling Group, y un Balanceador de Carga (ELB).
+  una VPC, EC2 con Apache, Auto Scaling Group, y un Balanceador de Carga (ELB).  # Detalla los recursos que se desplegarán.
 
-Parameters:
-  InstanceType:
-    Type: String
-    Default: t2.micro
-    Description: Tipo de instancia EC2 a utilizar
-    AllowedValues:
-      - t2.micro
-      - t2.small
-      - t3.micro
-      - t3.small
+
+Parameters:  # Sección para definir parámetros que pueden ser proporcionados en la creación de la pila.
+  InstanceType:  # Parámetro para el tipo de instancia EC2.
+    Type: String  # Especifica que el tipo es un string.
+    Default: t2.micro  # Valor por defecto para el parámetro.
+    Description: Tipo de instancia EC2 a utilizar  # Descripción del parámetro.
+    AllowedValues:  # Valores permitidos para este parámetro.
+      - t2.micro  # Tipo de instancia permitido.
+      - t2.small  # Tipo de instancia permitido.
+      - t3.micro  # Tipo de instancia permitido.
+      - t3.small  # Tipo de instancia permitido.
 
   KeyName:
     Type: AWS::EC2::KeyPair::KeyName
@@ -124,6 +125,31 @@ Resources:
       SubnetId: !Ref WebAppSubnet2
       RouteTableId: !Ref WebAppRouteTable
 
+  WebAppSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Permitir acceso HTTP y SSH'
+      VpcId: !Ref WebAppVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0  # Cambia esto para restringir el acceso SSH
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '443'
+          ToPort: '443'
+          CidrIp: 0.0.0.0/0
+  
+  EC2InstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Roles:
+        - EC2fullAccesToS3
+
   WebAppInstance:
     Type: 'AWS::EC2::Instance'
     Properties:
@@ -133,41 +159,30 @@ Resources:
       SubnetId: !Ref WebAppSubnet1
       SecurityGroupIds:
         - !Ref WebAppSecurityGroup
+      IamInstanceProfile: !Ref EC2InstanceProfile  # Asigna el perfil de instancia
       UserData:
         Fn::Base64: |
           #!/bin/bash
-          # Comenzar el registro de depuración
           exec > /var/log/user-data.log 2>&1
           echo "Iniciando UserData en la instancia"
           yum update -y
-          yum install -y httpd aws-cli
+          yum install -y httpd aws-cli wget
           systemctl start httpd
           systemctl enable httpd
-          # Buscar el bucket que contiene "webapp" en su nombre
+
+          # Definir el bucket de S3
           BUCKET_NAME=$(aws s3api list-buckets --query "Buckets[?contains(Name, 'webapp')].Name" --output text)
           echo "Bucket encontrado: $BUCKET_NAME"
-          
-          # Crear index.html
-          echo "<html><body><h1>Hello, World from $(hostname -f)</h1></body></html>" > /var/www/html/index.html
-          echo "Creado index.html"
 
-          # Subir index.html al bucket
-          if aws s3 cp /var/www/html/index.html s3://$BUCKET_NAME/index.html; then
-            echo "index.html subido correctamente a s3://$BUCKET_NAME/index.html"
-          else
-            echo "Error al subir index.html"
-          fi
+          # Descargar archivos desde GitHub
+          wget https://raw.githubusercontent.com/nicg2c2/labCloudFormation/develop/index.html -O /var/www/html/index.html
+          wget https://raw.githubusercontent.com/nicg2c2/labCloudFormation/develop/error.html -O /var/www/html/error.html
 
-          # Crear error.html
-          echo "<html><body><h1>Error</h1></body></html>" > /var/www/html/error.html
-          echo "Creado error.html"
+          # Subir archivos a S3
+          aws s3 cp /var/www/html/index.html s3://$BUCKET_NAME/index.html
+          aws s3 cp /var/www/html/error.html s3://$BUCKET_NAME/error.html
 
-          # Subir error.html al bucket
-          if aws s3 cp /var/www/html/error.html s3://$BUCKET_NAME/error.html; then
-            echo "error.html subido correctamente a s3://$BUCKET_NAME/error.html"
-          else
-            echo "Error al subir error.html"
-          fi
+          echo "Archivos descargados desde GitHub y subidos a S3"
       Tags:
         - Key: Name
           Value: WebAppInstance
@@ -183,27 +198,35 @@ Resources:
       UserData:
         Fn::Base64: |
           #!/bin/bash
-          # Comenzar el registro de depuración
           exec > /var/log/user-data.log 2>&1
           echo "Iniciando UserData en la instancia de Auto Scaling"
           yum update -y
-          yum install -y httpd aws-cli
+          yum install -y httpd aws-cli wget
           systemctl start httpd
           systemctl enable httpd
-          # Buscar el bucket que contiene "webapp" en su nombre
+
+          # Obtener el nombre del bucket
           BUCKET_NAME=$(aws s3api list-buckets --query "Buckets[?contains(Name, 'webapp')].Name" --output text)
           echo "Bucket encontrado: $BUCKET_NAME"
 
-          # Crear index.html
-          echo "<html><body><h1>Hello, World from AutoScaling $(hostname -f)</h1></body></html>" > /var/www/html/index.html
-          echo "Creado index.html"
-
-          # Subir index.html al bucket
-          if aws s3 cp /var/www/html/index.html s3://$BUCKET_NAME/index.html; then
-            echo "index.html subido correctamente a s3://$BUCKET_NAME/index.html"
+          # Descargar archivos desde GitHub (o desde S3 si ya existen)
+          if aws s3 ls s3://$BUCKET_NAME/index.html; then
+            echo "index.html ya existe en el bucket"
+            aws s3 cp s3://$BUCKET_NAME/index.html /var/www/html/index.html
           else
-            echo "Error al subir index.html"
+            wget https://raw.githubusercontent.com/nicg2c2/labCloudFormation/develop/index.html -O /var/www/html/index.html
+            aws s3 cp /var/www/html/index.html s3://$BUCKET_NAME/index.html
           fi
+
+          if aws s3 ls s3://$BUCKET_NAME/error.html; then
+            echo "error.html ya existe en el bucket"
+            aws s3 cp s3://$BUCKET_NAME/error.html /var/www/html/error.html
+          else
+            wget https://raw.githubusercontent.com/nicg2c2/labCloudFormation/develop/error.html -O /var/www/html/error.html
+            aws s3 cp /var/www/html/error.html s3://$BUCKET_NAME/error.html
+          fi
+
+          echo "Archivos listos en /var/www/html"
 
   WebAppAutoScalingGroup:
     Type: 'AWS::AutoScaling::AutoScalingGroup'
@@ -216,7 +239,11 @@ Resources:
       MaxSize: '3'
       DesiredCapacity: '2'
       TargetGroupARNs:
-        - !Ref WebAppTargetGroup
+        - !Ref WebAppTargetGroup  # Añadir el grupo de destino
+      Tags:
+        - Key: Name
+          Value: WebAppASG
+          PropagateAtLaunch: true  # Agregar esta línea
 
   WebAppLoadBalancer:
     Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
@@ -226,6 +253,9 @@ Resources:
         - !Ref WebAppSubnet2
       SecurityGroups:
         - !Ref WebAppSecurityGroup
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '60'
 
   WebAppTargetGroup:
     Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
@@ -245,25 +275,6 @@ Resources:
       LoadBalancerArn: !Ref WebAppLoadBalancer
       Port: 80
       Protocol: HTTP
-
-  WebAppSecurityGroup:
-    Type: 'AWS::EC2::SecurityGroup'
-    Properties:
-      VpcId: !Ref WebAppVPC
-      GroupDescription: Security group for web application
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          CidrIp: 0.0.0.0/0  # Permitir acceso SSH desde cualquier IP (puedes limitar esto a tu IP si prefieres)
-        - IpProtocol: tcp
-          FromPort: '80'
-          ToPort: '80'
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: '443'
-          ToPort: '443'
-          CidrIp: 0.0.0.0/0
 
 Outputs:
   S3BucketURL:
