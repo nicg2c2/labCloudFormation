@@ -1,0 +1,275 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Plantilla de CloudFormation para desplegar una aplicación web con S3,  
+  una VPC, EC2 con Apache, Auto Scaling Group, y un Balanceador de Carga (ELB).
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: t2.micro
+    Description: Tipo de instancia EC2 a utilizar
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t3.micro
+      - t3.small
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Nombre del par de claves SSH existente para conectarse a la instancia EC2
+    ConstraintDescription: Clave RSA (SSH) válida para la instancia EC2de la WebApp para CloudFormation
+    Default: webApp_keypair  # Aquí colocas el nombre exacto de la clave que creaste en AWS
+
+Mappings:
+  # Mapa de AMIs para cada región.
+  RegionMap:
+    us-east-1:
+      AMI: ami-0fff1b9a61dec8a5f
+    us-east-2:
+      AMI: ami-09da212cf18033880
+
+Resources:
+  WebAppS3Bucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      WebsiteConfiguration: 
+        IndexDocument: index.html
+        ErrorDocument: error.html
+      PublicAccessBlockConfiguration: 
+        BlockPublicAcls: false
+        IgnorePublicAcls: false
+        BlockPublicPolicy: false
+        RestrictPublicBuckets: false
+
+  WebAppS3BucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref WebAppS3Bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: 
+              - 's3:PutObject'
+              - 's3:GetObject'
+            Resource: !Sub 'arn:aws:s3:::${WebAppS3Bucket}/*'
+
+  WebAppVPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: WebAppVPC
+
+  WebAppInternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Properties: {}
+
+  WebAppVpcGatewayAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref WebAppVPC
+      InternetGatewayId: !Ref WebAppInternetGateway
+
+  WebAppRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref WebAppVPC
+      Tags:
+        - Key: Name
+          Value: WebAppRouteTable
+
+  WebAppRoute:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref WebAppRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref WebAppInternetGateway
+
+  WebAppSubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref WebAppVPC
+      CidrBlock: 10.0.0.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: WebAppSubnet1
+
+  WebAppSubnet2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref WebAppVPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: WebAppSubnet2
+
+  WebAppSubnet1RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref WebAppSubnet1
+      RouteTableId: !Ref WebAppRouteTable
+
+  WebAppSubnet2RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref WebAppSubnet2
+      RouteTableId: !Ref WebAppRouteTable
+
+  WebAppInstance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName  # Asigna la clave SSH
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", AMI] # Selección de AMI basada en la región.
+      SubnetId: !Ref WebAppSubnet1
+      SecurityGroupIds:
+        - !Ref WebAppSecurityGroup
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          # Comenzar el registro de depuración
+          exec > /var/log/user-data.log 2>&1
+          echo "Iniciando UserData en la instancia"
+          yum update -y
+          yum install -y httpd aws-cli
+          systemctl start httpd
+          systemctl enable httpd
+          # Buscar el bucket que contiene "webapp" en su nombre
+          BUCKET_NAME=$(aws s3api list-buckets --query "Buckets[?contains(Name, 'webapp')].Name" --output text)
+          echo "Bucket encontrado: $BUCKET_NAME"
+          
+          # Crear index.html
+          echo "<html><body><h1>Hello, World from $(hostname -f)</h1></body></html>" > /var/www/html/index.html
+          echo "Creado index.html"
+
+          # Subir index.html al bucket
+          if aws s3 cp /var/www/html/index.html s3://$BUCKET_NAME/index.html; then
+            echo "index.html subido correctamente a s3://$BUCKET_NAME/index.html"
+          else
+            echo "Error al subir index.html"
+          fi
+
+          # Crear error.html
+          echo "<html><body><h1>Error</h1></body></html>" > /var/www/html/error.html
+          echo "Creado error.html"
+
+          # Subir error.html al bucket
+          if aws s3 cp /var/www/html/error.html s3://$BUCKET_NAME/error.html; then
+            echo "error.html subido correctamente a s3://$BUCKET_NAME/error.html"
+          else
+            echo "Error al subir error.html"
+          fi
+      Tags:
+        - Key: Name
+          Value: WebAppInstance
+
+  WebAppLaunchConfiguration:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    Properties:
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", AMI] # Selección de AMI para Auto Scaling.
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SecurityGroups:
+        - !Ref WebAppSecurityGroup
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          # Comenzar el registro de depuración
+          exec > /var/log/user-data.log 2>&1
+          echo "Iniciando UserData en la instancia de Auto Scaling"
+          yum update -y
+          yum install -y httpd aws-cli
+          systemctl start httpd
+          systemctl enable httpd
+          # Buscar el bucket que contiene "webapp" en su nombre
+          BUCKET_NAME=$(aws s3api list-buckets --query "Buckets[?contains(Name, 'webapp')].Name" --output text)
+          echo "Bucket encontrado: $BUCKET_NAME"
+
+          # Crear index.html
+          echo "<html><body><h1>Hello, World from AutoScaling $(hostname -f)</h1></body></html>" > /var/www/html/index.html
+          echo "Creado index.html"
+
+          # Subir index.html al bucket
+          if aws s3 cp /var/www/html/index.html s3://$BUCKET_NAME/index.html; then
+            echo "index.html subido correctamente a s3://$BUCKET_NAME/index.html"
+          else
+            echo "Error al subir index.html"
+          fi
+
+  WebAppAutoScalingGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref WebAppSubnet1
+        - !Ref WebAppSubnet2
+      LaunchConfigurationName: !Ref WebAppLaunchConfiguration
+      MinSize: '1'
+      MaxSize: '3'
+      DesiredCapacity: '2'
+      TargetGroupARNs:
+        - !Ref WebAppTargetGroup
+
+  WebAppLoadBalancer:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      Subnets:
+        - !Ref WebAppSubnet1
+        - !Ref WebAppSubnet2
+      SecurityGroups:
+        - !Ref WebAppSecurityGroup
+
+  WebAppTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      VpcId: !Ref WebAppVPC
+      Port: 80
+      Protocol: HTTP
+      HealthCheckPath: /
+      TargetType: instance
+
+  WebAppListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref WebAppTargetGroup
+      LoadBalancerArn: !Ref WebAppLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  WebAppSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !Ref WebAppVPC
+      GroupDescription: Security group for web application
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0  # Permitir acceso SSH desde cualquier IP (puedes limitar esto a tu IP si prefieres)
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '443'
+          ToPort: '443'
+          CidrIp: 0.0.0.0/0
+
+Outputs:
+  S3BucketURL:
+    Description: 'URL del bucket de S3 para almacenar archivos estáticos'
+    Value: !GetAtt WebAppS3Bucket.WebsiteURL
+
+  LoadBalancerURL:
+    Description: 'URL del balanceador de carga'
+    Value: !Sub 'http://${WebAppLoadBalancer.DNSName}'
