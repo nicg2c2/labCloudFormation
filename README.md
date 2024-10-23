@@ -68,7 +68,7 @@ Esta plantilla de CloudFormation permite desplegar una aplicación web en AWS, u
 Para implementar esta plantilla, sigue estos pasos:
 
 1. Abre la consola de AWS CloudFormation.
-2. Crea una nueva pila y selecciona "Crear a partir de un archivo".
+2. Crea un nuevo stack y selecciona "Crear a partir de un archivo".
 3. Carga el archivo de plantilla de CloudFormation.
 4. Proporciona los valores para los parámetros requeridos.
-5. Revisa y lanza la pila.
+5. Revisar y lanzar el stack.
